@@ -92,7 +92,7 @@
       ];
 
       for (let key in fetchedPatient) {
-        if (['risk_score', 'created_at', 'op_number','id', 'name', 'available_doctors','height','weight','age'].includes(key)) continue;
+        if (['risk_score', 'created_at', 'op_number','id', 'name', 'available_doctors','height','weight'].includes(key)) continue;
 
         const value = fetchedPatient[key] || '';
         const label = key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());

@@ -20,8 +20,8 @@ db = SQLAlchemy(app)
 
 # Load models
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
-readmission_model = joblib.load(os.path.join(BASE_DIR, "model", "xgboost_readmission_model.pkl"))
-readmission_preprocessor = joblib.load(os.path.join(BASE_DIR, "model", "xgboost_preprocessor.pkl"))
+readmission_model = joblib.load(os.path.join(BASE_DIR, "model", "heart_model.pkl"))
+readmission_preprocessor = joblib.load(os.path.join(BASE_DIR, "model", "preprocessing.pkl"))
 diabetes_model = joblib.load(os.path.join(BASE_DIR, "model", "diabetes_model.pkl"))
 
 # Utility function to safely convert to int

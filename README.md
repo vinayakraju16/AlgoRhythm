@@ -44,9 +44,9 @@ project/
 │   ├── diabetes.db           # Database
 │   └── readmission.db        # Database
 ├── model/
-│   ├── diabetes_model.pkl
-│   ├── xgboost_preprocessor.pkl
-│   └── xgboost_readmission_model.pkl
+│   ├── diabetes_model.pkl     # Random forest
+│   ├── preprocessing.pkl      # Pre-Processing file
+│   └── heart_model.pkl        # MLP Model 
 ├── static/
 │   └── style.css              # (optional styling)
 ├── templates/
@@ -129,5 +129,4 @@ services:
 
 ---
 
-> Made with ❤️ for AI-Driven Healthcare
 
