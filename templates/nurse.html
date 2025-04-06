@@ -120,7 +120,12 @@
   <div id="successModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center hidden z-50">
     <div class="bg-white p-6 rounded-lg shadow-lg text-center">
       <h2 class="text-xl font-bold text-green-600 mb-2">✅ Patient Submitted</h2>
-      <p class="mb-4">OP Number: <span id="opNumberText" class="font-semibold text-blue-700"></span></p>
+      <p class="mb-4">
+        OP Number: 
+        <span id="opNumberText" class="font-semibold text-blue-700"></span>
+        <button onclick="copyOpNumber()" class="ml-2 px-2 py-1 bg-gray-200 hover:bg-gray-300 text-sm rounded">📋 Copy</button>
+      </p>
+      <p class="mb-4">Assigned Doctor: <span id="doctorNameText" class="font-semibold text-green-700"></span></p>
       <button onclick="closeModal()" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">Close</button>
     </div>
   </div>
@@ -161,6 +166,7 @@
       .then(data => {
         if (data.status === "success") {
           document.getElementById("opNumberText").innerText = data.op_number;
+          document.getElementById("doctorNameText").innerText = formData.get("available_doctors");
           document.getElementById("successModal").classList.remove("hidden");
           form.reset();
           toggleForm("readmission");
@@ -172,6 +178,15 @@
         alert("Request failed: " + err.message);
       });
     }
+
+    function copyOpNumber() {
+    const opText = document.getElementById("opNumberText").innerText;
+    navigator.clipboard.writeText(opText).then(() => {
+      alert("✅ OP Number copied to clipboard!");
+    }).catch(() => {
+      alert("❌ Failed to copy.");
+    });
+  }
 
     function closeModal() {
       document.getElementById("successModal").classList.add("hidden");
