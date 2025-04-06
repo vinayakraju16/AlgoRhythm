@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: hospital-readmission
+    env: python
+    plan: free
+    buildCommand: ""
+    startCommand: gunicorn app:app
+    envVars:
+      - key: FLASK_ENV
+        value: production
