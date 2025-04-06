@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Edit Patient - Nurse</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+</head>
+<body class="bg-gray-100 min-h-screen p-6">
+  <div class="max-w-xl mx-auto bg-white p-8 shadow-xl rounded-xl">
+    <div class="mb-4 flex justify-between items-center">
+      <h1 class="text-xl font-bold text-blue-700">✏️ Edit Patient Record</h1>
+      <a href="/nurse/all_patients" class="text-sm text-blue-600 hover:underline">← Back</a>
+    </div>
+
+    <form action="/nurse/update" method="POST" class="space-y-4">
+      <input type="hidden" name="op_number" value="{{ patient.op_number }}">
+
+      <input name="name" type="text" value="{{ patient.name }}" placeholder="Patient Name" class="w-full p-2 border rounded" required />
+      <input name="age" type="text" value="{{ patient.age }}" placeholder="Age Bracket (e.g. 60-70)" class="w-full p-2 border rounded" required />
+      <input name="height" type="number" step="0.1" value="{{ patient.height }}" placeholder="Height (cm)" class="w-full p-2 border rounded" required />
+      <input name="weight" type="number" step="0.1" value="{{ patient.weight }}" placeholder="Weight (kg)" class="w-full p-2 border rounded" required />
+      <input name="location" type="text" value="{{ patient.location }}" placeholder="Location" class="w-full p-2 border rounded" required />
+      <input name="problem" type="text" value="{{ patient.problem }}" placeholder="Reported Problem" class="w-full p-2 border rounded" required />
+      <input name="available_doctors" type="text" value="{{ patient.available_doctors }}" placeholder="Available Doctors" class="w-full p-2 border rounded" required />
+
+      <button type="submit" class="w-full bg-green-600 text-white py-2 rounded hover:bg-green-700">💾 Save Changes</button>
+    </form>
+  </div>
+</body>
+</html>

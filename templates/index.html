@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Hospital Portal</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet" />
+</head>
+<body class="bg-gray-100 min-h-screen p-4 flex items-center justify-center">
+
+  <!-- 🔐 Login Screen -->
+  <div id="loginSection" class="bg-white max-w-md w-full p-6 rounded-xl shadow-xl">
+    <h2 class="text-2xl font-bold text-center text-blue-700 mb-6">🔐 Staff Login</h2>
+    <form id="loginForm" class="space-y-4">
+      <input id="username" type="text" placeholder="Username" class="w-full p-2 border rounded" required />
+      <input id="password" type="password" placeholder="Password" class="w-full p-2 border rounded" required />
+      <button type="submit" class="w-full bg-blue-600 text-white py-2 rounded hover:bg-blue-700">Login</button>
+    </form>
+  </div>
+
+  <!-- 👨‍⚕️/👩‍⚕️ Dashboard -->
+  <div id="dashboard" class="hidden w-full max-w-xl">
+    <div class="bg-white p-8 rounded-xl shadow-xl">
+      <!-- Logout Button -->
+      <div class="text-right mb-4">
+        <button onclick="logout()" class="text-sm text-red-600 hover:underline font-semibold">🔓 Logout</button>
+      </div>
+
+      <h1 class="text-3xl font-bold text-center text-blue-700 mb-6">📋 Add Patient Record</h1>
+
+      <form id="patientForm" class="space-y-4">
+        <input name="age" type="number" placeholder="Age" class="w-full p-2 border rounded" required />
+        <input name="time_in_hospital" type="number" placeholder="Time in Hospital" class="w-full p-2 border rounded" required />
+        <input name="num_lab_procedures" type="number" placeholder="Number of Lab Procedures" class="w-full p-2 border rounded" required />
+        <button type="submit" class="w-full bg-blue-600 text-white py-2 rounded hover:bg-blue-700">💾 Submit</button>
+      </form>
+
+      <!-- Doctor-only Section -->
+      <div id="doctorExtras" class="hidden">
+        <div id="confirmation" class="mt-4 text-center font-semibold text-green-600"></div>
+        <div class="mt-6 text-center">
+          <a href="/patients" target="_blank" class="text-blue-600 underline hover:text-blue-800">📄 View All Patient Records</a>
+        </div>
+      </div>
+
+      <!-- Nurse-only Message -->
+      <div id="nurseMsg" class="hidden mt-4 text-center text-yellow-600 font-medium">
+        ✅ Patient added. Only doctors can view prediction results.
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let userRole = '';
+
+    document.getElementById('loginForm').addEventListener('submit', function (e) {
+      e.preventDefault();
+
+      const username = document.getElementById('username').value.trim().toLowerCase();
+      const password = document.getElementById('password').value;
+
+      if (username === 'doctor' && password === 'admin123') {
+        userRole = 'doctor';
+      } else if (username === 'nurse' && password === 'nurse123') {
+        userRole = 'nurse';
+      } else {
+        alert('Invalid credentials');
+        return;
+      }
+
+      document.getElementById('loginSection').classList.add('hidden');
+      document.getElementById('dashboard').classList.remove('hidden');
+
+      if (userRole === 'doctor') {
+        document.getElementById('doctorExtras').classList.remove('hidden');
+      } else {
+        document.getElementById('nurseMsg').classList.remove('hidden');
+      }
+    });
+
+    document.getElementById('patientForm').addEventListener('submit', async function (e) {
+      e.preventDefault();
+
+      const formData = new FormData(this);
+      const res = await fetch('/predict', {
+        method: 'POST',
+        body: formData
+      });
+
+      const data = await res.json();
+
+      if (userRole === 'doctor') {
+        const confirmation = document.getElementById('confirmation');
+        confirmation.innerText = `✅ Risk Prediction: ${(data.readmission_risk * 100).toFixed(1)}%. Patient saved!`;
+        confirmation.classList.remove('hidden');
+        setTimeout(() => confirmation.classList.add('hidden'), 5000);
+      } else {
+        const msg = document.getElementById('nurseMsg');
+        msg.classList.remove('hidden');
+        setTimeout(() => msg.classList.add('hidden'), 5000);
+      }
+
+      this.reset();
+    });
+
+    function logout() {
+      document.getElementById('dashboard').classList.add('hidden');
+      document.getElementById('doctorExtras').classList.add('hidden');
+      document.getElementById('nurseMsg').classList.add('hidden');
+      document.getElementById('loginSection').classList.remove('hidden');
+      document.getElementById('username').value = '';
+      document.getElementById('password').value = '';
+      userRole = '';
+    }
+  </script>
+</body>
+</html>
