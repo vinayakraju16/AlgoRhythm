@@ -5,12 +5,24 @@
   <title>All Patients</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+  <script>
+    function switchModel(select) {
+      const model = select.value;
+      window.location.href = `/doctor/all_patients?model=${model}`;
+    }
+  </script>
 </head>
 <body class="bg-gray-100 min-h-screen p-6">
   <div class="max-w-full mx-auto">
     <div class="flex justify-between items-center mb-6">
       <h1 class="text-3xl font-bold text-blue-700">📄 All Patients</h1>
-      <a href="/doctor" class="text-sm text-blue-600 hover:underline">← Back to Doctor Panel</a>
+      <div class="flex items-center space-x-4">
+        <select onchange="switchModel(this)" class="p-2 border rounded text-sm">
+          <option value="readmission" {% if selected_model == 'readmission' %}selected{% endif %}>Readmission</option>
+          <option value="diabetes" {% if selected_model == 'diabetes' %}selected{% endif %}>Diabetes</option>
+        </select>
+        <a href="/doctor" class="text-sm text-blue-600 hover:underline">← Back to Doctor Panel</a>
+      </div>
     </div>
 
     <div class="overflow-x-auto">
@@ -32,7 +44,7 @@
             <th class="p-2">Treatment</th>
             <th class="p-2">Notes</th>
             <th class="p-2">Created</th>
-            <th class="p-2">Edit</th>
+            <!-- <th class="p-2">Edit</th> -->
           </tr>
         </thead>
         <tbody>
@@ -46,16 +58,16 @@
             <td class="p-2">{{ p.location }}</td>
             <td class="p-2">{{ p.problem }}</td>
             <td class="p-2">{{ p.available_doctors }}</td>
-            <td class="p-2">{{ p.time_in_hospital }}</td>
-            <td class="p-2">{{ p.num_lab_procedures }}</td>
+            <td class="p-2">{{ p.time_in_hospital or '-' }}</td>
+            <td class="p-2">{{ p.num_lab_procedures or '-' }}</td>
             <td class="p-2">{{ '%.1f'|format(p.risk_score * 100 if p.risk_score else 0) }}%</td>
-            <td class="p-2">{{ p.diagnosis or '-' }}</td>
-            <td class="p-2">{{ p.treatment or '-' }}</td>
-            <td class="p-2">{{ p.notes or '-' }}</td>
+            <td class="p-2">{{ p.diagnosis if p.diagnosis else '-' }}</td>
+            <td class="p-2">{{ p.treatment if p.treatment else '-' }}</td>
+            <td class="p-2">{{ p.notes if p.notes else '-' }}</td>
             <td class="p-2">{{ p.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
-            <td class="p-2">
-                <a href="/doctor/edit/{{ p.op_number }}" class="text-blue-600 hover:underline">✏️ Edit</a>
-            </td>
+            <!-- <td class="p-2">
+              <a href="/doctor/edit/{{ p.op_number }}?model={{ selected_model }}" class="text-blue-600 hover:underline">✏️ Edit</a>
+            </td> -->
           </tr>
           {% else %}
           <tr>

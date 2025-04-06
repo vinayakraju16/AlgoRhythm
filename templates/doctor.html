@@ -2,147 +2,194 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Doctor Panel - Patient Lookup</title>
+  <title>Doctor Panel</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
-</head>
-<body class="bg-gray-100 min-h-screen p-4">
-  <div class="bg-white max-w-6xl mx-auto p-6 rounded-xl shadow-xl">
-    <div class="flex justify-between items-center mb-6">
-      <h1 class="text-2xl font-bold text-blue-700">👨‍⚕️ Doctor Panel</h1>
-      <div>
-        <a href="/doctor/all_patients" class="text-sm text-green-600 hover:underline mr-4">📄 View All Patients</a>
-        <a href="/" class="text-sm text-red-600 hover:underline">🔓 Logout</a>
-      </div>
-    </div>
-
-    <form id="searchForm" class="flex gap-4 mb-6">
-      <input id="opNumber" type="text" placeholder="Enter OP Number" class="flex-1 p-2 border rounded" required>
-      <button type="submit" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">🔍 Search</button>
-    </form>
-
-    <div id="patientDetails" class="hidden">
-      <h2 class="text-xl font-semibold text-gray-800 mb-4">🩺 Edit Patient Details</h2>
-      <form id="updateForm" class="grid grid-cols-2 gap-4">
-        <input type="hidden" name="op_number" id="updateOpNumber">
-
-        <input name="name" type="text" placeholder="Patient Name" class="p-2 border rounded" required />
-        <input name="age" type="text" placeholder="Age Bracket" class="p-2 border rounded" required />
-        <input name="height" type="number" step="0.1" placeholder="Height" class="p-2 border rounded" required />
-        <input name="weight" type="number" step="0.1" placeholder="Weight" class="p-2 border rounded" required />
-        <input name="location" type="text" placeholder="Location" class="p-2 border rounded" required />
-        <input name="problem" type="text" placeholder="Problem" class="p-2 border rounded" required />
-        <input name="available_doctors" type="text" placeholder="Doctor" class="p-2 border rounded" required />
-
-        <input name="time_in_hospital" type="number" placeholder="Time in Hospital" class="p-2 border rounded" required />
-        <input name="n_procedures" type="number" placeholder="# Number of Procedures" class="p-2 border rounded" required />
-        <input name="n_lab_procedures" type="number" placeholder="# Lab Procedures" class="p-2 border rounded" required />
-        <input name="n_medications" type="number" placeholder="# Medications Given" class="p-2 border rounded" required />
-        <input name="n_outpatient" type="number" placeholder="# Outpatient" class="p-2 border rounded" required />
-        <input name="n_inpatient" type="number" placeholder="# Inpatient" class="p-2 border rounded" required />
-        <input name="n_emergency" type="number" placeholder="# Emergency" class="p-2 border rounded" required />
-
-        <input name="medical_specialty" type="text" placeholder="Medical Specialty" class="p-2 border rounded" required />
-        <input name="diag_1" type="text" placeholder="Primary Diagnosis" class="p-2 border rounded" required />
-        <input name="diag_2" type="text" placeholder="Secondary Diagnosis" class="p-2 border rounded" required />
-        <input name="diag_3" type="text" placeholder="Additional Diagnosis" class="p-2 border rounded" required />
-
-        <select name="glucose_test" class="p-2 border rounded" required>
-          <option value="">Glucose Test</option>
-          <option value="None">None</option>
-          <option value="Norm">Normal</option>
-          <option value=">200">High</option>
-        </select>
-
-        <select name="A1Ctest" class="p-2 border rounded" required>
-          <option value="">A1C Test</option>
-          <option value="None">None</option>
-          <option value="Norm">Normal</option>
-          <option value=">7">High</option>
-        </select>
-
-        <select name="change" class="p-2 border rounded" required>
-          <option value="">Medication Changed?</option>
-          <option value="yes">Yes</option>
-          <option value="no">No</option>
-        </select>
-
-        <select name="diabetes_med" class="p-2 border rounded" required>
-          <option value="">Diabetes Medication?</option>
-          <option value="yes">Yes</option>
-          <option value="no">No</option>
-        </select>
-
-        <textarea name="diagnosis" placeholder="Diagnosis" class="col-span-2 p-2 border rounded" required></textarea>
-        <textarea name="treatment" placeholder="Treatment" class="col-span-2 p-2 border rounded" required></textarea>
-        <textarea name="notes" placeholder="Additional Notes" class="col-span-2 p-2 border rounded"></textarea>
-
-        <button type="submit" class="col-span-2 bg-green-600 text-white py-2 rounded hover:bg-green-700">💾 Save Changes</button>
-      </form>
-      <div id="updateMsg" class="text-center text-green-600 mt-4 hidden font-semibold"></div>
-    </div>
-  </div>
-
+  <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet" />
   <script>
-    document.getElementById("searchForm").addEventListener("submit", async function (e) {
-      e.preventDefault();
-      const op = document.getElementById("opNumber").value.trim();
-      const res = await fetch(`/doctor/patient/${op}`);
-      const data = await res.json();
+    let fetchedPatient = null;
+
+    async function fetchPatient() {
+      const model = document.getElementById('modelSelector').value;
+      const opNumber = document.getElementById('opInput').value;
+      const summarySection = document.getElementById('summary');
+      const editSection = document.getElementById('editForm');
+      const formFields = document.getElementById('formFields');
+
+      summarySection.classList.add('hidden');
+      editSection.classList.add('hidden');
+      formFields.innerHTML = '';
+      fetchedPatient = null;
+
+      const response = await fetch(`/doctor/get_patient?model=${model}&op_number=${opNumber}`);
+      const data = await response.json();
 
       if (data.status === 'success') {
-        const p = data.patient;
-        const form = document.getElementById("updateForm");
+        fetchedPatient = data.patient;
 
-        document.getElementById("updateOpNumber").value = p.op_number;
-        form.name.value = p.name;
-        form.age.value = p.age;
-        form.height.value = p.height;
-        form.weight.value = p.weight;
-        form.location.value = p.location;
-        form.problem.value = p.problem;
-        form.available_doctors.value = p.available_doctors;
+        const patient = data.patient;
+        let summaryHTML = `
+        <div class="bg-white p-6 rounded-xl shadow-lg">
+          <h2 class="text-2xl font-bold text-blue-700 mb-4">🧾 Patient Summary (${model})</h2>
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 text-gray-800 text-base">
+            <p><span class="font-semibold">👤 Name:</span> ${patient.name}</p>
+            <p><span class="font-semibold">🎂 Age:</span> ${patient.age}</p>
+            <p><span class="font-semibold">📏 Height:</span> ${patient.height} cm</p>
+            <p><span class="font-semibold">⚖️ Weight:</span> ${patient.weight} kg</p>
+            <p><span class="font-semibold">🩺 Problem:</span> ${patient.problem}</p>
+            <p><span class="font-semibold">📊 Risk Score:</span> <span class="text-red-600 font-bold">${(patient.risk_score * 100).toFixed(2)}%</span></p>
+          </div>
+          <div class="mt-6 text-right">
+            <button onclick="showEdit()" class="bg-yellow-500 text-white px-4 py-2 rounded hover:bg-yellow-600 transition font-medium shadow-md">
+              ✏️ Edit Details
+            </button>
+          </div>
+        </div>
+        `;
 
-        form.time_in_hospital.value = p.time_in_hospital;
-        form.n_lab_procedures.value = p.n_lab_procedures;
-        form.n_procedures.value = p.n_procedures;
-        form.n_medications.value = p.n_medications;
-        form.n_outpatient.value = p.n_outpatient;
-        form.n_inpatient.value = p.n_inpatient;
-        form.n_emergency.value = p.n_emergency;
-        form.medical_specialty.value = p.medical_specialty;
-        form.diag_1.value = p.diag_1;
-        form.diag_2.value = p.diag_2;
-        form.diag_3.value = p.diag_3;
-        form.glucose_test.value = p.glucose_test;
-        form.A1Ctest.value = p.A1Ctest;
-        form.change.value = p.change;
-        form.diabetes_med.value = p.diabetes_med;
-        form.diagnosis.value = p.diagnosis;
-        form.treatment.value = p.treatment;
-        form.notes.value = p.notes;
-
-        // Additional pre-fill logic if needed
-
-        document.getElementById("patientDetails").classList.remove("hidden");
+        summarySection.innerHTML = summaryHTML;
+        summarySection.classList.remove('hidden');
       } else {
-        alert("❌ Patient not found");
+        alert(data.message || "Patient not found.");
       }
-    });
+    }
 
-    document.getElementById("updateForm").addEventListener("submit", async function (e) {
-      e.preventDefault();
-      const formData = new FormData(this);
-      const res = await fetch('/doctor/update', {
+    function showEdit() {
+      if (!fetchedPatient) return;
+
+      const model = document.getElementById('modelSelector').value;
+      const formFields = document.getElementById('formFields');
+      const editSection = document.getElementById('editForm');
+      formFields.innerHTML = '';
+
+      const readmissionDropdowns = {
+        A1Ctest: ['None', 'Norm', '>7'],
+        glucose_test: ['None', 'Norm', '>200'],
+        change: ['yes', 'no'],
+        diabetes_med: ['yes', 'no'],
+        readmitted: ['yes', 'no'],
+        medical_specialty: ['Cardiology', 'Surgery', 'Orthopedics', 'Nephrology', 'General'],
+        age: ['[0-10]', '[10-20]', '[20-30]', '[30-40]', '[40-50]', '[50-60]', '[60-70]', '[70-80]', '[80-90]', '[90-100]'],
+        diag_1: ['Circulatory', 'Respiratory', 'Digestive', 'Diabetes', 'Injury'],
+        diag_2: ['Circulatory', 'Respiratory', 'Digestive', 'Diabetes', 'Injury'],
+        diag_3: ['Circulatory', 'Respiratory', 'Digestive', 'Diabetes', 'Injury']
+      };
+
+      const readmissionNumerics = [
+        'time_in_hospital', 'n_procedures', 'n_lab_procedures', 'n_medications',
+        'n_outpatient', 'n_inpatient', 'n_emergency'
+      ];
+
+      for (let key in fetchedPatient) {
+        if (['risk_score', 'created_at', 'op_number'].includes(key)) continue;
+
+        const value = fetchedPatient[key] || '';
+        const label = key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+
+        const wrapper = document.createElement('div');
+        wrapper.className = 'form-group';
+
+        const labelEl = document.createElement('label');
+        labelEl.className = 'block text-sm font-semibold text-gray-700 mb-1';
+        labelEl.textContent = label;
+
+        let inputEl;
+        if (readmissionDropdowns[key]) {
+          inputEl = document.createElement('select');
+          inputEl.name = key;
+          inputEl.className = 'p-2 border border-gray-300 rounded w-full bg-white';
+          readmissionDropdowns[key].forEach(option => {
+            const opt = document.createElement('option');
+            opt.value = option;
+            opt.text = option;
+            if (option == value) opt.selected = true;
+            inputEl.appendChild(opt);
+          });
+        } else if (readmissionNumerics.includes(key)) {
+          inputEl = document.createElement('input');
+          inputEl.name = key;
+          inputEl.type = 'number';
+          inputEl.value = value;
+          inputEl.className = 'p-2 border border-gray-300 rounded w-full';
+        } else {
+          inputEl = document.createElement('input');
+          inputEl.name = key;
+          inputEl.value = value;
+          inputEl.className = 'p-2 border border-gray-300 rounded w-full';
+        }
+
+        wrapper.appendChild(labelEl);
+        wrapper.appendChild(inputEl);
+        formFields.appendChild(wrapper);
+      }
+
+      const hiddenInput = document.createElement('input');
+      hiddenInput.type = 'hidden';
+      hiddenInput.name = 'op_number';
+      hiddenInput.value = fetchedPatient.op_number;
+      formFields.appendChild(hiddenInput);
+
+      editSection.classList.remove('hidden');
+    }
+
+    async function updatePatient(event) {
+      event.preventDefault();
+      const model = document.getElementById('modelSelector').value;
+      const form = document.getElementById('editPatientForm');
+      const formData = new FormData(form);
+
+      formData.delete('risk_score');
+      formData.delete('created_at');
+
+      const response = await fetch(`/doctor/update_patient?model=${model}`, {
         method: 'POST',
-        body: formData
+        body: formData,
       });
-      const data = await res.json();
 
-      const msg = document.getElementById("updateMsg");
-      msg.innerText = data.status === 'success' ? "✅ Record updated successfully." : "❌ Failed to update record.";
-      msg.classList.remove("hidden");
-    });
+      const data = await response.json();
+      alert(data.status === 'success' ? '✅ Patient updated!' : '❌ Update failed!');
+    }
+
+    function goToAllPatients() {
+      const model = document.getElementById('modelSelector').value;
+      window.location.href = `/doctor/all_patients?model=${model}`;
+    }
   </script>
+</head>
+<body class="bg-gray-100 min-h-screen p-6">
+  <div class="bg-white max-w-5xl mx-auto p-8 rounded-xl shadow-xl">
+
+    <!-- Top bar -->
+    <div class="flex justify-between items-center mb-6">
+      <h1 class="text-2xl font-bold text-blue-700">👨‍⚕️ Doctor Panel</h1>
+      <a href="/" class="text-sm text-red-600 hover:underline font-semibold">🔓 Logout</a>
+    </div>
+
+    <!-- Controls -->
+    <div class="flex flex-wrap gap-4 items-center mb-6">
+      <label class="font-semibold">Select Model:</label>
+      <select id="modelSelector" class="p-2 border rounded">
+        <option value="readmission">Readmission</option>
+        <option value="diabetes">Diabetes</option>
+      </select>
+      <input id="opInput" placeholder="Enter OP Number" class="p-2 border rounded flex-1" />
+      <button onclick="fetchPatient()" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">🔍 Fetch</button>
+      <button onclick="goToAllPatients()" class="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700">📋 Show All Patients</button>
+    </div>
+
+    <!-- Summary -->
+    <div id="summary" class="bg-gray-50 p-4 rounded shadow hidden"></div>
+
+    <!-- Edit Form -->
+    <div id="editForm" class="hidden transition-all duration-300 ease-in-out mt-6">
+      <h2 class="text-xl font-bold mb-4 text-green-700">📝 Edit Patient Details</h2>
+      <form id="editPatientForm" onsubmit="updatePatient(event)" enctype="multipart/form-data">
+        <div id="formFields" class="grid grid-cols-1 sm:grid-cols-2 gap-6"></div>
+        <div class="mt-6">
+          <button type="submit" class="w-full bg-green-600 text-white py-3 rounded-lg shadow hover:bg-green-700 transition">💾 Save Changes</button>
+        </div>
+      </form>
+    </div>
+
+  </div>
 </body>
 </html>

@@ -6,92 +6,178 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet" />
 </head>
-<body class="bg-gray-100 min-h-screen flex items-center justify-center p-4">
-  <div class="bg-white max-w-3xl w-full p-8 rounded-xl shadow-xl">
-    <div class="flex justify-between items-center mb-2">
-      <a href="/nurse/all_patients" class="text-sm text-green-600 hover:underline font-semibold">📋 View All Patients</a>
+<body class="bg-gray-100 min-h-screen p-6">
+  <div class="bg-white max-w-4xl mx-auto p-8 rounded-xl shadow-xl">
+
+    <div class="flex justify-between mb-4">
       <a href="/" class="text-sm text-red-600 hover:underline font-semibold">🔓 Logout</a>
     </div>
 
-    <h1 class="text-2xl font-bold text-center text-blue-700 mb-6">📝 Add Patient Record</h1>
+    <h1 class="text-2xl font-bold text-center text-blue-700 mb-4">🧾 Add Patient Record</h1>
 
-    <form id="patientForm" class="grid grid-cols-2 gap-4">
-      <input name="name" type="text" placeholder="Patient Name" class="p-2 border rounded" required />
-      <input name="age" type="text" placeholder="Age Bracket (e.g. 70-80)" class="p-2 border rounded" required />
+    <!-- Model Selector -->
+    <div class="mb-6 text-center">
+      <label class="mr-4 font-semibold">Choose Model:</label>
+      <select onchange="toggleForm(this.value)" class="p-2 border rounded">
+        <option value="readmission" selected>Readmission</option>
+        <option value="diabetes">Diabetes</option>
+      </select>
+    </div>
+
+    <!-- Patient Form -->
+    <form id="patientForm" class="grid grid-cols-2 gap-4" onsubmit="submitForm(event)">
+      <!-- Common Fields -->
+      <input name="name" type="text" placeholder="Full Name" class="p-2 border rounded" required />
+      <input name="age" type="text" placeholder="Age (e.g. [60-70])" class="p-2 border rounded" required />
       <input name="height" type="number" step="0.1" placeholder="Height (cm)" class="p-2 border rounded" required />
       <input name="weight" type="number" step="0.1" placeholder="Weight (kg)" class="p-2 border rounded" required />
-      <input name="location" type="text" placeholder="Location" class="p-2 border rounded" required />
+      <input name="location" type="text" placeholder="City / Region" class="p-2 border rounded" required />
       <input name="problem" type="text" placeholder="Reported Problem" class="p-2 border rounded" required />
-      <input name="available_doctors" type="text" placeholder="Available Doctors" class="p-2 border rounded" required />
-
-      <input name="time_in_hospital" type="number" placeholder="Time in Hospital" class="p-2 border rounded" required />
-      <input name="n_procedures" type="number" placeholder="Number of Procedures" class="p-2 border rounded" required />
-      <input name="n_lab_procedures" type="number" placeholder="Lab Procedures" class="p-2 border rounded" required />
-      <input name="n_medications" type="number" placeholder="Medications Given" class="p-2 border rounded" required />
-      <input name="n_outpatient" type="number" placeholder="Outpatient Visits" class="p-2 border rounded" required />
-      <input name="n_inpatient" type="number" placeholder="Inpatient Visits" class="p-2 border rounded" required />
-      <input name="n_emergency" type="number" placeholder="Emergency Visits" class="p-2 border rounded" required />
-
-      <input name="medical_specialty" type="text" placeholder="Medical Specialty" class="p-2 border rounded" required />
-      <input name="diag_1" type="text" placeholder="Primary Diagnosis" class="p-2 border rounded" required />
-      <input name="diag_2" type="text" placeholder="Secondary Diagnosis" class="p-2 border rounded" required />
-      <input name="diag_3" type="text" placeholder="Additional Diagnosis" class="p-2 border rounded" required />
-
-      <select name="glucose_test" class="p-2 border rounded" required>
-        <option value="">Glucose Test</option>
-        <option value="None">None</option>
-        <option value="Norm">Normal</option>
-        <option value=">200">High</option>
+      <select name="available_doctors" class="p-2 border rounded" required>
+        <option value="">Available Doctors</option>
+        <option>Dr. Shaun Murphy</option>
+        <option>Dr. Audrey Lim</option>
       </select>
 
-      <select name="A1Ctest" class="p-2 border rounded" required>
-        <option value="">A1C Test</option>
-        <option value="None">None</option>
-        <option value="Norm">Normal</option>
-        <option value=">7">High</option>
-      </select>
+      <!-- Readmission Fields -->
+      <div id="readmissionFields" class="contents">
+        <input name="time_in_hospital" type="number" class="p-2 border rounded" placeholder="Time in Hospital (1-14 days)" />
+        <input name="n_procedures" type="number" class="p-2 border rounded" placeholder="# Procedures during stay" />
+        <input name="n_lab_procedures" type="number" class="p-2 border rounded" placeholder="# Lab Procedures" />
+        <input name="n_medications" type="number" class="p-2 border rounded" placeholder="# Medications given" />
+        <input name="n_outpatient" type="number" class="p-2 border rounded" placeholder="# Outpatient Visits (past year)" />
+        <input name="n_inpatient" type="number" class="p-2 border rounded" placeholder="# Inpatient Visits (past year)" />
+        <input name="n_emergency" type="number" class="p-2 border rounded" placeholder="# ER Visits (past year)" />
+        <input name="medical_specialty" type="text" class="p-2 border rounded" placeholder="Medical Specialty (e.g. Cardiology)" />
+        <input name="diag_1" type="text" class="p-2 border rounded" placeholder="Primary Diagnosis (e.g. Circulatory)" />
+        <input name="diag_2" type="text" class="p-2 border rounded" placeholder="Secondary Diagnosis 1" />
+        <input name="diag_3" type="text" class="p-2 border rounded" placeholder="Secondary Diagnosis 2" />
+        <select name="glucose_test" class="p-2 border rounded">
+          <option value="">Glucose Serum Test</option>
+          <option value="None">Not Performed</option>
+          <option value="Norm">Normal</option>
+          <option value=">200">High (&gt;200)</option>
+        </select>
+        <select name="A1Ctest" class="p-2 border rounded">
+          <option value="">A1C Test</option>
+          <option value="None">Not Performed</option>
+          <option value="Norm">Normal</option>
+          <option value=">7">High (&gt;7%)</option>
+        </select>
+        <select name="change" class="p-2 border rounded">
+          <option value="">Medication Changed?</option>
+          <option value="yes">Yes</option>
+          <option value="no">No</option>
+        </select>
+        <select name="diabetes_med" class="p-2 border rounded">
+          <option value="">On Diabetes Medication?</option>
+          <option value="yes">Yes</option>
+          <option value="no">No</option>
+        </select>
+      </div>
 
-      <select name="change" class="p-2 border rounded" required>
-        <option value="">Medication Changed?</option>
-        <option value="yes">Yes</option>
-        <option value="no">No</option>
-      </select>
+      <!-- Diabetes Fields -->
+      <div id="diabetesFields" class="contents hidden">
+        <input name="number_inpatient" type="number" class="p-2 border rounded" placeholder="Inpatient Visits" />
+        <input name="number_emergency" type="number" class="p-2 border rounded" placeholder="Emergency Visits" />
+        <select name="discharge_disposition_id" class="p-2 border rounded">
+          <option value="">Discharge Disposition</option>
+          <option value="Home">Home</option>
+          <option value="Another Hospital">Another Hospital</option>
+          <option value="Rehab">Rehab</option>
+          <option value="Died">Died</option>
+        </select>
+        <input name="number_diagnoses" type="number" class="p-2 border rounded" placeholder="Number of Diagnoses" />
+        <input name="time_in_hospital" type="number" class="p-2 border rounded" placeholder="Time in Hospital" />
+        <input name="num_medications" type="number" class="p-2 border rounded" placeholder="Num of Medications" />
+        <select name="diabetes_med" class="p-2 border rounded">
+          <option value="">On Diabetes Med?</option>
+          <option value="yes">Yes</option>
+          <option value="no">No</option>
+        </select>
+        <select name="metformin" class="p-2 border rounded">
+          <option value="">Metformin</option>
+          <option value="No">No</option>
+          <option value="Steady">Steady</option>
+          <option value="Up">Up</option>
+          <option value="Down">Down</option>
+        </select>
+        <input name="num_lab_procedures" type="number" class="p-2 border rounded" placeholder="Lab Procedures" />
+        <select name="change" class="p-2 border rounded">
+          <option value="">Medication Changed?</option>
+          <option value="yes">Yes</option>
+          <option value="no">No</option>
+        </select>
+      </div>
 
-      <select name="diabetes_med" class="p-2 border rounded" required>
-        <option value="">Diabetes Medication?</option>
-        <option value="yes">Yes</option>
-        <option value="no">No</option>
-      </select>
-
-      <div class="col-span-2">
-        <button type="submit" class="w-full bg-blue-600 text-white py-2 rounded hover:bg-blue-700">➕ Submit Patient Data</button>
+      <div class="col-span-2 mt-4">
+        <button type="submit" class="w-full bg-blue-600 text-white py-2 rounded hover:bg-blue-700">➕ Submit Patient</button>
       </div>
     </form>
-
-    <div id="opDisplay" class="mt-4 hidden text-center text-green-600 font-semibold"></div>
   </div>
 
+  <!-- Success Modal -->
+  <div id="successModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center hidden z-50">
+    <div class="bg-white p-6 rounded-lg shadow-lg text-center">
+      <h2 class="text-xl font-bold text-green-600 mb-2">✅ Patient Submitted</h2>
+      <p class="mb-4">OP Number: <span id="opNumberText" class="font-semibold text-blue-700"></span></p>
+      <button onclick="closeModal()" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">Close</button>
+    </div>
+  </div>
+
+  <!-- Scripts -->
   <script>
-    document.getElementById("patientForm").addEventListener("submit", async function (e) {
-      e.preventDefault();
-      const formData = new FormData(this);
-      const res = await fetch("/nurse/add_patient", {
+    function toggleForm(model) {
+      const form = document.getElementById("patientForm");
+      const readmissionFields = document.querySelectorAll("#readmissionFields input, #readmissionFields select");
+      const diabetesFields = document.querySelectorAll("#diabetesFields input, #diabetesFields select");
+
+      if (model === "readmission") {
+        form.action = "/nurse/add_readmission_patient";
+        document.getElementById("readmissionFields").classList.remove("hidden");
+        document.getElementById("diabetesFields").classList.add("hidden");
+        readmissionFields.forEach(f => f.required = true);
+        diabetesFields.forEach(f => f.required = false);
+      } else {
+        form.action = "/nurse/add_diabetes_patient";
+        document.getElementById("diabetesFields").classList.remove("hidden");
+        document.getElementById("readmissionFields").classList.add("hidden");
+        readmissionFields.forEach(f => f.required = false);
+        diabetesFields.forEach(f => f.required = true);
+      }
+    }
+
+    function submitForm(event) {
+      event.preventDefault();
+      const form = document.getElementById("patientForm");
+      const url = form.action;
+      const formData = new FormData(form);
+
+      fetch(url, {
         method: "POST",
         body: formData
+      })
+      .then(res => res.json())
+      .then(data => {
+        if (data.status === "success") {
+          document.getElementById("opNumberText").innerText = data.op_number;
+          document.getElementById("successModal").classList.remove("hidden");
+          form.reset();
+          toggleForm("readmission");
+        } else {
+          alert("Error: " + data.message);
+        }
+      })
+      .catch(err => {
+        alert("Request failed: " + err.message);
       });
+    }
 
-      const data = await res.json();
-      const opEl = document.getElementById("opDisplay");
+    function closeModal() {
+      document.getElementById("successModal").classList.add("hidden");
+    }
 
-      if (data.status === "success") {
-        opEl.innerText = `✅ Patient added successfully. OP Number: ${data.op_number}`;
-        opEl.classList.remove("hidden");
-        this.reset();
-      } else {
-        opEl.innerText = `❌ Error: ${data.message || "Unable to save record."}`;
-        opEl.classList.remove("hidden");
-      }
-    });
+    window.onload = () => toggleForm("readmission");
   </script>
 </body>
 </html>
