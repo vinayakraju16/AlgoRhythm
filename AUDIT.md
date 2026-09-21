@@ -30,15 +30,31 @@ This document records what was found, what was fixed on branch
 | 9 | `README.md` claimed RandomForest and MLP models (both XGBoost), `instances/` (actual `instance/`), a placeholder clone URL, and had a stray ```` ```yaml ```` block. | **Fixed** |
 | 10 | No audit summary / dev plan. | **This document** |
 
-### Lower severity (not fixed — recorded for the plan)
+### Lower severity
 
-- `all_patients.html` renders `p.diagnosis`, `p.treatment`, `p.notes` — columns that do not exist on either model, so those cells are always `-`. They should come from the `problem`/`available_doctors` fields or be dropped.
-- `doctor.html` renders fetched values into `innerHTML` without escaping (stored XSS if patient text contains markup).
-- `doctor_edit_patient.html` is doctor-only in its field set; the `model` query arg is trusted straight from the URL.
-- No CSRF protection on the POST forms.
-- `db.create_all()` at import time is not migration-managed; schema changes require manual handling.
-- Free-tier Render instances have ephemeral disks, so SQLite data is lost on redeploy — needs Postgres for real use.
-- `flask-cors` is imported nowhere.
+| # | Finding | Status |
+| --- | --- | --- |
+| 11 | `all_patients.html` rendered `p.diagnosis`, `p.treatment`, `p.notes` — columns that do not exist on either model, so those cells were always `-`. Now mapped to the real `problem` / `available_doctors` fields. | **Fixed** |
+| 12 | `doctor.html` interpolated fetched patient JSON into `innerHTML` unescaped — stored XSS via any patient-supplied text field. An `escapeHtml` helper is now applied to every interpolated value. | **Fixed** |
+| 13 | No CSRF protection on any POST form. A per-session token now lives in the signed cookie; a `before_request` hook rejects any unsafe method without a matching `_csrf_token` field or `X-CSRF-Token` header (400). All forms carry the token. | **Fixed** |
+| 14 | Five handlers returned `str(e)` with HTTP 500, leaking SQL, file paths, and model internals to the client. A shared `internal_error()` helper logs the real exception server-side and answers with a generic message. | **Fixed** |
+| 15 | `flask-cors` was pinned but imported nowhere. | **Fixed** (removed) |
+| 16 | `doctor_edit_patient.html` is doctor-only in its field set; the `model` query arg is trusted straight from the URL. | **Still outstanding** — low impact, validated against a known model list |
+| 17 | `db.create_all()` at import time is not migration-managed; schema changes need manual handling. | **Still outstanding** |
+| 18 | Free-tier Render instances have ephemeral disks, so SQLite data is lost on redeploy. | **Still outstanding** — needs Postgres |
+
+---
+
+## Features added
+
+| # | Feature | Where |
+| --- | --- | --- |
+| B1 | **Pagination + search** on patient lists (25/page, filters by OP number or name). | `paginate_patients()`, `all_patients.html`, `nurse_all_patients.html` |
+| B2 | **Audit log** — records timestamp, actor, role, action, model type, OP number, and detail on create/update/login/logout. Doctor-only viewer. | `AuditLog`, `record_audit()`, `/doctor/audit_log` |
+| B3 | **Health check** for deploys — reports DB connectivity and model-load status, 503 when unhealthy. | `/healthz` |
+| B4 | **Doctor dashboard** — per-model totals, high-risk count (risk ≥ 0.7), average risk, and the 5 most recent records. | `/doctor/dashboard`, `dashboard.html` |
+| B5 | **CSV export** of patient lists, honouring the active search filter. | `/doctor/export/<model>.csv` |
+| B6 | **Test suite** — auth, CSRF, role separation, OP-number uniqueness, pagination, export, audit log, `/healthz`. | `tests/` |
 
 ---
 
@@ -71,11 +87,15 @@ previously valid score alone.
 
 ## Verification performed
 
-- `python3 -m py_compile app.py` — passes.
+- `python3 -m py_compile app.py` and every file under `tests/` — passes.
 - `requirements.txt` decodes as UTF-8 with no BOM.
-- A script extracts every URL literal from `templates/` and asserts a matching Flask rule exists.
-- Full `pip install` of the requirements could not be run in this environment:
-  the host Python is **3.14** with **no `pip` module available**, and several
-  pinned wheels (e.g. `xgboost==3.0.0`, `pandas==2.2.3`) have no 3.14 builds.
-  The app was therefore **not executed**; verification is static plus
-  `py_compile`.
+- `python3 tools/check_routes.py` — every URL literal in `templates/` resolves to a declared Flask rule (19 routes).
+- `grep` confirms no `str(e)` remains in a 500 response, and no unescaped `innerHTML` interpolation remains in `doctor.html`.
+- `flask-cors` is absent from `requirements.txt` and is never imported.
+- AST pass over `app.py` confirms no undefined names.
+
+**The test suite was NOT executed.** This environment has no `pip` module, no
+PyPI egress, and only Python 3.14 — for which the pinned `xgboost==3.0.0` and
+`pandas==2.2.3` wheels do not exist. The tests are syntax-checked only. Runtime
+behaviour is unverified and must be confirmed on a machine with the pinned
+Python 3.11 and the requirements installed.
