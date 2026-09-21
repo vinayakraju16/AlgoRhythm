@@ -13,6 +13,7 @@
     <p class="mb-4 text-center text-red-600 font-semibold">{{ error }}</p>
     {% endif %}
     <form id="loginForm" method="POST" action="{{ url_for('login') }}" class="space-y-4">
+      <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}" />
       <input type="hidden" name="next" value="{{ request.args.get('next', '') }}" />
       <input id="username" name="username" type="text" placeholder="Username" class="w-full p-2 border rounded" required autocomplete="username" />
       <input id="password" name="password" type="password" placeholder="Password" class="w-full p-2 border rounded" required autocomplete="current-password" />

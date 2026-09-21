@@ -13,7 +13,8 @@
       <a href="/nurse/all_patients?model={{ selected_model if selected_model is defined else 'readmission' }}" class="text-sm text-blue-600 hover:underline">← Back</a>
     </div>
 
-    <form action="/nurse/update" method="POST" class="space-y-4">
+    <form action="/nurse/update?model={{ selected_model if selected_model is defined else 'readmission' }}" method="POST" class="space-y-4">
+      <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}" />
       <input type="hidden" name="op_number" value="{{ patient.op_number }}">
 
       <input name="name" type="text" value="{{ patient.name }}" placeholder="Patient Name" class="w-full p-2 border rounded" required />

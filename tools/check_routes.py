@@ -52,6 +52,7 @@ for name in sorted(os.listdir(TEMPLATES)):
             continue
         path = url.split('?', 1)[0]
         path = re.sub(r'\{\{.*?\}\}', 'OP000000000000', path)  # jinja value
+        path = re.sub(r'\{%.*?%\}', '', path)                   # jinja tag/block
         path = re.sub(r'\$\{[^}]*\}', 'OP000000000000', path)  # js template value
         path = re.sub(r'<[^>]*>', 'OP000000000000', path)
         referenced.setdefault(path, set()).add(name)

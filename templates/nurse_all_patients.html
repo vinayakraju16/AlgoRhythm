@@ -10,8 +10,26 @@
   <div class="max-w-full mx-auto">
     <div class="flex justify-between items-center mb-6">
       <h1 class="text-3xl font-bold text-blue-700">👩‍⚕️ Nurse - All Patients</h1>
-      <a href="/nurse" class="text-sm text-blue-600 hover:underline">← Back to Nurse Panel</a>
+      <div class="flex items-center space-x-4">
+        <select onchange="window.location.href='/nurse/all_patients?model=' + this.value + (currentSearch ? '&q=' + encodeURIComponent(currentSearch) : '')"
+                class="p-2 border rounded text-sm">
+          <option value="readmission" {% if selected_model == 'readmission' %}selected{% endif %}>Readmission</option>
+          <option value="diabetes" {% if selected_model == 'diabetes' %}selected{% endif %}>Diabetes</option>
+        </select>
+        <a href="/nurse" class="text-sm text-blue-600 hover:underline">← Back to Nurse Panel</a>
+      </div>
     </div>
+
+    <form method="GET" action="/nurse/all_patients" class="flex flex-wrap gap-3 items-center mb-4">
+      <input type="hidden" name="model" value="{{ selected_model }}" />
+      <input name="q" value="{{ search }}" placeholder="Search OP number or name"
+             class="p-2 border rounded text-sm flex-1 max-w-md" />
+      <button type="submit" class="bg-blue-600 text-white px-4 py-2 rounded text-sm hover:bg-blue-700">🔍 Search</button>
+      {% if search %}
+      <a href="/nurse/all_patients?model={{ selected_model }}" class="text-sm text-gray-600 hover:underline">Clear</a>
+      {% endif %}
+      <span class="text-sm text-gray-600">{{ patients.total }} record(s)</span>
+    </form>
 
     <div class="overflow-x-auto">
       <table class="min-w-full bg-white shadow-md rounded-xl text-sm">
@@ -30,19 +48,19 @@
           </tr>
         </thead>
         <tbody>
-          {% for p in patients %}
+          {% for p in patients.items %}
           <tr class="border-t hover:bg-gray-50">
             <td class="p-2">{{ p.op_number }}</td>
-            <td class="p-2">{{ p.name }}</td>
-            <td class="p-2">{{ p.age }}</td>
-            <td class="p-2">{{ p.height }}</td>
-            <td class="p-2">{{ p.weight }}</td>
-            <td class="p-2">{{ p.location }}</td>
-            <td class="p-2">{{ p.problem }}</td>
-            <td class="p-2">{{ p.available_doctors }}</td>
-            <td class="p-2">{{ p.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+            <td class="p-2">{{ p.name or '-' }}</td>
+            <td class="p-2">{{ p.age or '-' }}</td>
+            <td class="p-2">{{ p.height if p.height is not none else '-' }}</td>
+            <td class="p-2">{{ p.weight if p.weight is not none else '-' }}</td>
+            <td class="p-2">{{ p.location or '-' }}</td>
+            <td class="p-2">{{ p.problem or '-' }}</td>
+            <td class="p-2">{{ p.available_doctors or '-' }}</td>
+            <td class="p-2">{{ p.created_at.strftime('%Y-%m-%d %H:%M') if p.created_at else '-' }}</td>
             <td class="p-2">
-              <a href="/nurse/edit/{{ p.op_number }}" class="text-blue-600 hover:underline">✏️ Edit</a>
+              <a href="/nurse/edit/{{ p.op_number }}?model={{ selected_model }}" class="text-blue-600 hover:underline">✏️ Edit</a>
             </td>
           </tr>
           {% else %}
@@ -53,6 +71,24 @@
         </tbody>
       </table>
     </div>
+
+    {% if patients.pages > 1 %}
+    <div class="flex items-center justify-between mt-4 text-sm">
+      <span class="text-gray-600">Page {{ patients.page }} of {{ patients.pages }}</span>
+      <div class="space-x-2">
+        {% if patients.has_prev %}
+        <a href="{{ page_url(patients.prev_num) }}" class="px-3 py-1 bg-white border rounded hover:bg-gray-50">← Previous</a>
+        {% endif %}
+        {% if patients.has_next %}
+        <a href="{{ page_url(patients.next_num) }}" class="px-3 py-1 bg-white border rounded hover:bg-gray-50">→ Next</a>
+        {% endif %}
+      </div>
+    </div>
+    {% endif %}
   </div>
+
+  <script>
+    const currentSearch = {{ search | tojson }};
+  </script>
 </body>
 </html>

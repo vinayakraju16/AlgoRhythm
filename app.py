@@ -1,9 +1,12 @@
 from flask import (
-    Flask, request, jsonify, render_template, session, redirect, url_for, abort
+    Flask, request, jsonify, render_template, session, redirect, url_for, abort,
+    Response
 )
 from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy import inspect, text
+from sqlalchemy import func, inspect, or_, text
+import csv
 import functools
+import io
 import json
 import joblib
 import pandas as pd
@@ -15,11 +18,13 @@ import secrets
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-secret-change-me')
 
-# Database configuration with multiple binds
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///default.db'  # default (can be unused)
+# Database configuration with multiple binds. Each URI can be overridden from
+# the environment so tests (and a real deployment) can point somewhere else
+# without editing code.
+app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URI', 'sqlite:///default.db')
 app.config['SQLALCHEMY_BINDS'] = {
-    'readmission': 'sqlite:///readmission.db',
-    'diabetes': 'sqlite:///diabetes.db'
+    'readmission': os.environ.get('READMISSION_DATABASE_URI', 'sqlite:///readmission.db'),
+    'diabetes': os.environ.get('DIABETES_DATABASE_URI', 'sqlite:///diabetes.db')
 }
 
 db = SQLAlchemy(app)
@@ -29,6 +34,12 @@ BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 readmission_model = joblib.load(os.path.join(BASE_DIR, "model", "heart_model.pkl"))
 readmission_preprocessor = joblib.load(os.path.join(BASE_DIR, "model", "preprocessing.pkl"))
 diabetes_model = joblib.load(os.path.join(BASE_DIR, "model", "diabetes_model.pkl"))
+
+# Reported by /healthz: the app cannot score anything without all three artifacts.
+MODELS_LOADED = all(
+    artifact is not None
+    for artifact in (readmission_model, readmission_preprocessor, diabetes_model)
+)
 
 # Credentials for the two staff roles, overridable via environment variables.
 DOCTOR_USERNAME = os.environ.get('DOCTOR_USERNAME', 'doctor')
@@ -91,6 +102,50 @@ def login_required(*roles):
             return view(*args, **kwargs)
         return wrapped
     return decorator
+
+
+# --- CSRF protection -------------------------------------------------------
+#
+# One token per session, held in the signed session cookie (no extra dependency).
+# Every unsafe request must echo it back, either as the `_csrf_token` form field
+# or as an `X-CSRF-Token` header.
+CSRF_SESSION_KEY = '_csrf_token'
+CSRF_FIELD_NAME = '_csrf_token'
+UNSAFE_METHODS = ('POST', 'PUT', 'PATCH', 'DELETE')
+
+
+def csrf_token():
+    """Return this session's CSRF token, creating it on first use."""
+    token = session.get(CSRF_SESSION_KEY)
+    if not token:
+        token = secrets.token_urlsafe(32)
+        session[CSRF_SESSION_KEY] = token
+    return token
+
+
+app.jinja_env.globals['csrf_token'] = csrf_token
+
+
+@app.before_request
+def csrf_protect():
+    """Reject any state-changing request that does not carry the session token."""
+    if request.method not in UNSAFE_METHODS:
+        return None
+    expected = session.get(CSRF_SESSION_KEY)
+    submitted = request.form.get(CSRF_FIELD_NAME) or request.headers.get('X-CSRF-Token') or ''
+    if not expected or not submitted or not secrets.compare_digest(str(expected), str(submitted)):
+        abort(400, description='CSRF token missing or invalid.')
+    return None
+
+
+def internal_error(context):
+    """Log the real exception server-side and answer with a generic message.
+
+    Exception text can carry SQL, file paths and model internals, so it must
+    not reach the client.
+    """
+    app.logger.exception(context)
+    return jsonify({'status': 'error', 'message': 'Internal server error'}), 500
 
 
 # Readmission Model
@@ -156,6 +211,47 @@ class DiabetesData(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
 
 
+# Audit trail (default bind): who changed which patient record, and when.
+class AuditLog(db.Model):
+    __tablename__ = 'audit_log'
+
+    id = db.Column(db.Integer, primary_key=True)
+    timestamp = db.Column(db.DateTime, default=datetime.datetime.utcnow, index=True)
+    actor = db.Column(db.String(64))
+    role = db.Column(db.String(20))
+    action = db.Column(db.String(20))
+    model_type = db.Column(db.String(40))
+    op_number = db.Column(db.String(40))
+    detail = db.Column(db.Text)
+
+    def to_dict(self):
+        return {
+            'timestamp': self.timestamp.strftime('%Y-%m-%d %H:%M:%S') if self.timestamp else '',
+            'actor': self.actor,
+            'role': self.role,
+            'action': self.action,
+            'model_type': self.model_type,
+            'op_number': self.op_number,
+            'detail': self.detail,
+        }
+
+
+def record_audit(action, model_type=None, op_number=None, detail=None, actor=None, role=None):
+    """Queue an audit entry in the current session; the caller commits it."""
+    if actor is None:
+        actor = session.get('user')
+    if role is None:
+        role = session.get('role')
+    db.session.add(AuditLog(
+        actor=actor,
+        role=role,
+        action=action,
+        model_type=model_type,
+        op_number=op_number,
+        detail=(detail or '')[:500],
+    ))
+
+
 def initialize_db():
     """Create tables and backfill columns missing from older SQLite files."""
     with app.app_context():
@@ -194,6 +290,49 @@ PERSISTED_DIABETES_FEATURES = (
     'number_emergency', 'number_diagnoses', 'discharge_disposition_id', 'metformin',
     'change', 'diabetesMed'
 )
+
+# Patient list page size (pagination).
+PATIENTS_PER_PAGE = 25
+# A stored risk at or above this counts as "high risk" on the dashboard.
+HIGH_RISK_THRESHOLD = 0.7
+
+# Patient list model names accepted from the `model` query argument.
+PATIENT_MODELS = ('readmission', 'diabetes')
+
+
+def patient_model_class(model):
+    """Return the ORM class for a `model` query argument (default readmission)."""
+    return DiabetesData if model == 'diabetes' else ReadmissionData
+
+
+def patient_search_filter(model_class, term):
+    """Case-insensitive `op_number` OR `name` filter, or None when blank."""
+    term = (term or '').strip()
+    if not term:
+        return None
+    pattern = f"%{term}%"
+    return or_(model_class.op_number.ilike(pattern), model_class.name.ilike(pattern))
+
+
+def paginate_patients(model_class, page, term=None, per_page=PATIENTS_PER_PAGE):
+    """Newest-first page of patients, optional op_number/name search."""
+    query = model_class.query
+    condition = patient_search_filter(model_class, term)
+    if condition is not None:
+        query = query.filter(condition)
+    return query.order_by(model_class.created_at.desc()).paginate(
+        page=page, per_page=per_page, error_out=False
+    )
+
+
+def build_page_urls(**params):
+    """Build page links that preserve the current query arguments."""
+    clean = {k: v for k, v in params.items() if v not in (None, '')}
+
+    def page_url(target):
+        return url_for(request.endpoint, **{**clean, 'page': target})
+
+    return page_url
 
 
 def diabetes_features_from_form(data):
@@ -271,6 +410,9 @@ def login():
         session.clear()
         session['user'] = username
         session['role'] = role
+        csrf_token()  # bind a fresh CSRF token to the new session
+        record_audit('login', actor=username, role=role, detail='Signed in')
+        db.session.commit()
 
         next_url = request.args.get('next') or request.form.get('next') or ''
         # Only allow same-site relative redirects.
@@ -283,6 +425,9 @@ def login():
 
 @app.route('/logout')
 def logout():
+    if session.get('user'):
+        record_audit('logout', detail='Signed out')
+        db.session.commit()
     session.clear()
     return redirect(url_for('login'))
 
@@ -342,12 +487,17 @@ def add_readmission():
         )
 
         db.session.add(record)
+        record_audit(
+            'create', model_type='readmission', op_number=op_number,
+            detail=f"Created readmission record for {record.name or 'unnamed patient'}",
+        )
         db.session.commit()
 
         return jsonify({'status': 'success', 'op_number': op_number})
 
     except Exception as e:
-        return jsonify({'status': 'error', 'message': str(e)}), 500
+        db.session.rollback()
+        return internal_error('Readmission creation failed')
 
 
 @app.route('/nurse/add_diabetes_patient', methods=['POST'])
@@ -384,35 +534,43 @@ def add_diabetes():
         )
 
         db.session.add(record)
+        record_audit(
+            'create', model_type='diabetes', op_number=op_number,
+            detail=f"Created diabetes record for {record.name or 'unnamed patient'}",
+        )
         db.session.commit()
         return jsonify({'status': 'success', 'op_number': op_number})
 
     except Exception as e:
-        print("Diabetes Prediction Error:", e)
-        return jsonify({'status': 'error', 'message': str(e)}), 500
+        db.session.rollback()
+        return internal_error('Diabetes creation failed')
 
 @app.route('/doctor/all_patients')
 @login_required('doctor')
 def all_patients():
     model = request.args.get("model", "readmission")
-    if model == "diabetes":
-        patients = DiabetesData.query.order_by(DiabetesData.created_at.desc()).all()
-    else:
-        patients = ReadmissionData.query.order_by(ReadmissionData.created_at.desc()).all()
+    search = (request.args.get('q') or '').strip()
+    page = request.args.get('page', 1, type=int)
+    patients = paginate_patients(patient_model_class(model), page, search)
 
-    return render_template("all_patients.html", patients=patients, selected_model=model)
+    return render_template(
+        "all_patients.html", patients=patients, selected_model=model,
+        search=search, page_url=build_page_urls(model=model, q=search),
+    )
 
 
 @app.route('/nurse/all_patients')
 @login_required('nurse')
 def nurse_all_patients():
     model = request.args.get("model", "readmission")
-    if model == "diabetes":
-        patients = DiabetesData.query.order_by(DiabetesData.created_at.desc()).all()
-    else:
-        patients = ReadmissionData.query.order_by(ReadmissionData.created_at.desc()).all()
+    search = (request.args.get('q') or '').strip()
+    page = request.args.get('page', 1, type=int)
+    patients = paginate_patients(patient_model_class(model), page, search)
 
-    return render_template("nurse_all_patients.html", patients=patients, selected_model=model)
+    return render_template(
+        "nurse_all_patients.html", patients=patients, selected_model=model,
+        search=search, page_url=build_page_urls(model=model, q=search),
+    )
 
 
 # Doctor route: Get patient details
@@ -517,12 +675,14 @@ def update_patient():
             processed = readmission_preprocessor.transform(input_df)
             patient.risk_score = readmission_model.predict_proba(processed)[0][1]
 
+        record_audit('update', model_type=model, op_number=patient.op_number,
+                     detail='Updated patient record')
         db.session.commit()
         return jsonify({'status': 'success'})
 
     except Exception as e:
-        print(f"Update Error: {e}")
-        return jsonify({'status': 'error', 'message': str(e)}), 500
+        db.session.rollback()
+        return internal_error('Patient update failed')
 
 
 @app.route('/doctor/update', methods=['POST'])
@@ -545,10 +705,12 @@ def doctor_update_patient_form():
                 continue
             if hasattr(patient, key):
                 setattr(patient, key, coerce_like(getattr(patient, key), value))
+        record_audit('update', model_type=model, op_number=patient.op_number,
+                     detail='Updated patient record')
         db.session.commit()
     except Exception as e:
-        print(f"Update Error: {e}")
-        return jsonify({'status': 'error', 'message': str(e)}), 500
+        db.session.rollback()
+        return internal_error('Patient update failed')
 
     return redirect(url_for('doctor_edit_patient', op_number=patient.op_number, model=model))
 
@@ -579,18 +741,103 @@ def nurse_update_patient():
     if not patient:
         return render_template('nurse_edit_patient.html', patient=None), 404
 
+    model = 'diabetes' if isinstance(patient, DiabetesData) else 'readmission'
     try:
         for key, value in data.items():
             if key in ['id', 'created_at', 'risk_score', 'op_number']:
                 continue
             if hasattr(patient, key):
                 setattr(patient, key, coerce_like(getattr(patient, key), value))
+        record_audit('update', model_type=model, op_number=patient.op_number,
+                     detail='Updated patient record (nurse)')
         db.session.commit()
     except Exception as e:
-        print(f"Update Error: {e}")
-        return jsonify({'status': 'error', 'message': str(e)}), 500
+        db.session.rollback()
+        return internal_error('Patient update failed')
 
     return redirect(url_for('nurse_all_patients'))
+
+
+@app.route('/doctor/dashboard')
+@login_required('doctor')
+def doctor_dashboard():
+    """Doctor-only overview: volume, risk distribution and recent activity."""
+    stats = {}
+    recent = []
+    for label, model_class in (('readmission', ReadmissionData), ('diabetes', DiabetesData)):
+        average = db.session.query(func.avg(model_class.risk_score)).filter(
+            model_class.risk_score.isnot(None)
+        ).scalar()
+        stats[label] = {
+            'total': model_class.query.count(),
+            'high_risk': model_class.query.filter(
+                model_class.risk_score >= HIGH_RISK_THRESHOLD
+            ).count(),
+            'average_risk': float(average) if average is not None else None,
+        }
+        for record in model_class.query.order_by(model_class.created_at.desc()).limit(5).all():
+            record.model_label = label
+            recent.append(record)
+
+    recent.sort(key=lambda p: p.created_at or datetime.datetime.min, reverse=True)
+    return render_template(
+        'dashboard.html', stats=stats, recent=recent[:5],
+        high_risk_threshold=HIGH_RISK_THRESHOLD,
+    )
+
+
+@app.route('/doctor/audit_log')
+@login_required('doctor')
+def audit_log():
+    """Doctor-only view of the most recent audit entries."""
+    entries = AuditLog.query.order_by(
+        AuditLog.timestamp.desc(), AuditLog.id.desc()
+    ).limit(200).all()
+    return render_template('audit_log.html', entries=entries)
+
+
+@app.route('/doctor/export/<model>.csv')
+@login_required('doctor')
+def export_patients_csv(model):
+    """Stream every patient row (honouring the list's search term) as CSV."""
+    if model not in PATIENT_MODELS:
+        abort(404)
+    model_class = patient_model_class(model)
+
+    query = model_class.query
+    condition = patient_search_filter(model_class, request.args.get('q'))
+    if condition is not None:
+        query = query.filter(condition)
+    records = query.order_by(model_class.created_at.desc()).all()
+
+    fieldnames = [column.name for column in model_class.__table__.columns]
+    buffer = io.StringIO()
+    writer = csv.DictWriter(buffer, fieldnames=fieldnames, extrasaction='ignore')
+    writer.writeheader()
+    for record in records:
+        writer.writerow({name: getattr(record, name) for name in fieldnames})
+
+    return Response(
+        buffer.getvalue(),
+        mimetype='text/csv',
+        headers={'Content-Disposition': f'attachment; filename="{model}_patients.csv"'},
+    )
+
+
+@app.route('/healthz')
+def healthz():
+    """Unauthenticated deploy health check: DB connectivity plus model load."""
+    checks = {'models_loaded': bool(MODELS_LOADED), 'database': True}
+    try:
+        for engine in db.engines.values():
+            with engine.connect() as connection:
+                connection.execute(text('SELECT 1'))
+    except Exception:
+        app.logger.exception('Health check database probe failed')
+        checks['database'] = False
+
+    healthy = checks['models_loaded'] and checks['database']
+    return jsonify({'status': 'ok' if healthy else 'error', 'checks': checks}), (200 if healthy else 503)
 
 
 if __name__ == '__main__':
