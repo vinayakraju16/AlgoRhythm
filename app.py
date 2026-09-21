@@ -1,13 +1,19 @@
-from flask import Flask, request, jsonify, render_template
+from flask import (
+    Flask, request, jsonify, render_template, session, redirect, url_for, abort
+)
 from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy import inspect, text
+import functools
+import json
 import joblib
 import pandas as pd
 import os
 import datetime
-import random
+import secrets
 
 # Flask app setup
 app = Flask(__name__)
+app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-secret-change-me')
 
 # Database configuration with multiple binds
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///default.db'  # default (can be unused)
@@ -24,12 +30,68 @@ readmission_model = joblib.load(os.path.join(BASE_DIR, "model", "heart_model.pkl
 readmission_preprocessor = joblib.load(os.path.join(BASE_DIR, "model", "preprocessing.pkl"))
 diabetes_model = joblib.load(os.path.join(BASE_DIR, "model", "diabetes_model.pkl"))
 
-# Utility function to safely convert to int
-def safe_int(value, default=0):
+# Credentials for the two staff roles, overridable via environment variables.
+DOCTOR_USERNAME = os.environ.get('DOCTOR_USERNAME', 'doctor')
+DOCTOR_PASSWORD = os.environ.get('DOCTOR_PASSWORD', 'admin123')
+NURSE_USERNAME = os.environ.get('NURSE_USERNAME', 'nurse')
+NURSE_PASSWORD = os.environ.get('NURSE_PASSWORD', 'nurse123')
+
+
+def to_int(value, default=0):
+    """Coerce a value to int, falling back to `default`."""
     try:
         return int(value)
-    except (ValueError, TypeError):
+    except (TypeError, ValueError):
         return default
+
+
+def coerce_like(current, value):
+    """Coerce `value` to the type of `current`; keep the raw value otherwise."""
+    if current is None or isinstance(current, str):
+        return value
+    try:
+        return type(current)(value)
+    except (TypeError, ValueError):
+        return value
+
+
+def generate_op_number(model):
+    """Return an OP number that is not yet used by `model`.
+
+    Uses a 6-digit random suffix (a much wider space than the previous
+    3-digit one) and re-rolls on the rare collision.
+    """
+    date_part = datetime.datetime.now().strftime('%Y%m%d')
+    for _ in range(20):
+        op_number = f"OP{date_part}{secrets.randbelow(1_000_000):06d}"
+        if model.query.filter_by(op_number=op_number).first() is None:
+            return op_number
+    # Last resort: millisecond-derived suffix, still unique in practice.
+    return f"OP{date_part}{int(datetime.datetime.now().timestamp() * 1000) % 10**9:09d}"
+
+
+def _authenticate(username, password):
+    """Return the role for a valid credential pair, else None."""
+    if username == DOCTOR_USERNAME and secrets.compare_digest(password, DOCTOR_PASSWORD):
+        return 'doctor'
+    if username == NURSE_USERNAME and secrets.compare_digest(password, NURSE_PASSWORD):
+        return 'nurse'
+    return None
+
+
+def login_required(*roles):
+    """Require a logged-in session, optionally restricted to specific roles."""
+    def decorator(view):
+        @functools.wraps(view)
+        def wrapped(*args, **kwargs):
+            if not session.get('user'):
+                return redirect(url_for('login', next=request.path))
+            if roles and session.get('role') not in roles:
+                abort(403)
+            return view(*args, **kwargs)
+        return wrapped
+    return decorator
+
 
 # Readmission Model
 class ReadmissionData(db.Model):
@@ -88,29 +150,161 @@ class DiabetesData(db.Model):
     num_lab_procedures = db.Column(db.Integer)
     change = db.Column(db.String(10))
     risk_score = db.Column(db.Float)
+    # Full 44-feature vector used for the stored risk score, so edits can be
+    # scored against the patient's real features instead of placeholders.
+    model_features = db.Column(db.Text)
     created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
 
-# Create tables for both binds
-with app.app_context():
-    db.create_all()
+
+def initialize_db():
+    """Create tables and backfill columns missing from older SQLite files."""
+    with app.app_context():
+        db.create_all()
+        engine = db.engines.get('diabetes')
+        if engine is None:
+            return
+        inspector = inspect(engine)
+        if 'diabetes_data' not in inspector.get_table_names():
+            return
+        columns = {col['name'] for col in inspector.get_columns('diabetes_data')}
+        if 'model_features' not in columns:
+            with engine.begin() as conn:
+                conn.execute(text('ALTER TABLE diabetes_data ADD COLUMN model_features TEXT'))
+
+
+initialize_db()
+
+# Feature order expected by the diabetes model.
+DIABETES_FEATURE_COLUMNS = [
+    'race', 'gender', 'age', 'admission_type_id', 'discharge_disposition_id', 'admission_source_id',
+    'time_in_hospital', 'num_lab_procedures', 'num_procedures', 'num_medications',
+    'number_outpatient', 'number_emergency', 'number_inpatient',
+    'diag_1', 'diag_2', 'diag_3', 'number_diagnoses',
+    'max_glu_serum', 'A1Cresult',
+    'metformin', 'repaglinide', 'nateglinide', 'chlorpropamide', 'glimepiride', 'acetohexamide',
+    'glipizide', 'glyburide', 'tolbutamide', 'pioglitazone', 'rosiglitazone', 'acarbose', 'miglitol',
+    'troglitazone', 'tolazamide', 'examide', 'citoglipton', 'insulin', 'glyburide-metformin',
+    'glipizide-metformin', 'glimepiride-pioglitazone', 'metformin-rosiglitazone',
+    'metformin-pioglitazone', 'change', 'diabetesMed'
+]
+
+# Patient columns that are also model features; refreshed on edit before rescoring.
+PERSISTED_DIABETES_FEATURES = (
+    'time_in_hospital', 'num_lab_procedures', 'num_medications', 'number_inpatient',
+    'number_emergency', 'number_diagnoses', 'discharge_disposition_id', 'metformin',
+    'change', 'diabetesMed'
+)
+
+
+def diabetes_features_from_form(data):
+    """Build the full diabetes feature vector from submitted form data."""
+    return {
+        'race': data.get('race', 'Caucasian'),
+        'gender': data.get('gender', 'Female'),
+        'age': data.get('age', '[70-80]'),
+        'admission_type_id': to_int(data.get('admission_type_id')),
+        'discharge_disposition_id': data.get('discharge_disposition_id', 'Home'),
+        'admission_source_id': to_int(data.get('admission_source_id')),
+        'time_in_hospital': to_int(data.get('time_in_hospital')),
+        'num_lab_procedures': to_int(data.get('num_lab_procedures')),
+        'num_procedures': to_int(data.get('num_procedures')),
+        'num_medications': to_int(data.get('num_medications')),
+        'number_outpatient': to_int(data.get('number_outpatient')),
+        'number_emergency': to_int(data.get('number_emergency')),
+        'number_inpatient': to_int(data.get('number_inpatient')),
+        'diag_1': data.get('diag_1', '250.83'),
+        'diag_2': data.get('diag_2', '250.01'),
+        'diag_3': data.get('diag_3', '250.8'),
+        'number_diagnoses': to_int(data.get('number_diagnoses')),
+        'max_glu_serum': data.get('max_glu_serum', 'None'),
+        'A1Cresult': data.get('A1Cresult', 'None'),
+        'metformin': data.get('metformin', 'No'),
+        'repaglinide': data.get('repaglinide', 'No'),
+        'nateglinide': data.get('nateglinide', 'No'),
+        'chlorpropamide': data.get('chlorpropamide', 'No'),
+        'glimepiride': data.get('glimepiride', 'No'),
+        'acetohexamide': data.get('acetohexamide', 'No'),
+        'glipizide': data.get('glipizide', 'No'),
+        'glyburide': data.get('glyburide', 'No'),
+        'tolbutamide': data.get('tolbutamide', 'No'),
+        'pioglitazone': data.get('pioglitazone', 'No'),
+        'rosiglitazone': data.get('rosiglitazone', 'No'),
+        'acarbose': data.get('acarbose', 'No'),
+        'miglitol': data.get('miglitol', 'No'),
+        'troglitazone': data.get('troglitazone', 'No'),
+        'tolazamide': data.get('tolazamide', 'No'),
+        'examide': data.get('examide', 'No'),
+        'citoglipton': data.get('citoglipton', 'No'),
+        'insulin': data.get('insulin', 'No'),
+        'glyburide-metformin': data.get('glyburide_metformin', 'No'),
+        'glipizide-metformin': data.get('glipizide_metformin', 'No'),
+        'glimepiride-pioglitazone': data.get('glimepiride_pioglitazone', 'No'),
+        'metformin-rosiglitazone': data.get('metformin_rosiglitazone', 'No'),
+        'metformin-pioglitazone': data.get('metformin_pioglitazone', 'No'),
+        'change': data.get('change', 'no'),
+        'diabetesMed': data.get('diabetesMed', 'yes')
+    }
+
+
+def predict_diabetes_risk(features):
+    """Score a full diabetes feature vector."""
+    input_df = pd.DataFrame([features])[DIABETES_FEATURE_COLUMNS]
+    for col in input_df.select_dtypes(include='object').columns:
+        input_df[col] = input_df[col].astype('category')
+    return float(diabetes_model.predict_proba(input_df)[0][1])
+
 
 @app.route('/')
 def home():
     return render_template('login.html')
 
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if request.method == 'POST':
+        username = (request.form.get('username') or '').strip().lower()
+        password = request.form.get('password') or ''
+        role = _authenticate(username, password)
+        if role is None:
+            return render_template('login.html', error='Invalid username or password.'), 401
+
+        session.clear()
+        session['user'] = username
+        session['role'] = role
+
+        next_url = request.args.get('next') or request.form.get('next') or ''
+        # Only allow same-site relative redirects.
+        if not next_url.startswith('/') or next_url.startswith('//'):
+            next_url = url_for('doctor_portal') if role == 'doctor' else url_for('nurse_portal')
+        return redirect(next_url)
+
+    return render_template('login.html')
+
+
+@app.route('/logout')
+def logout():
+    session.clear()
+    return redirect(url_for('login'))
+
+
 @app.route('/doctor')
+@login_required('doctor')
 def doctor_portal():
     return render_template('doctor.html')
 
+
 @app.route('/nurse')
+@login_required('nurse')
 def nurse_portal():
     return render_template('nurse.html')
 
+
 @app.route('/nurse/add_readmission_patient', methods=['POST'])
+@login_required('nurse')
 def add_readmission():
     try:
         data = request.form
-        op_number = f"OP{datetime.datetime.now().strftime('%Y%m%d')}{random.randint(100,999)}"
+        op_number = generate_op_number(ReadmissionData)
 
         features = {
             'age': data.get('age'),
@@ -157,94 +351,15 @@ def add_readmission():
 
 
 @app.route('/nurse/add_diabetes_patient', methods=['POST'])
+@login_required('nurse')
 def add_diabetes():
     try:
         data = request.form
-        op_number = f"OP{datetime.datetime.now().strftime('%Y%m%d')}{random.randint(100,999)}"
+        op_number = generate_op_number(DiabetesData)
 
-        # Map string to numerical encoding for categorical features
-        def map_categorical(value, mapping, default=0):
-            return mapping.get(value, default)
+        features = diabetes_features_from_form(data)
+        risk = predict_diabetes_risk(features)
 
-        # Safely convert to int
-        def to_int(val, default=0):
-            try:
-                return int(val)
-            except:
-                return default
-
-        # All features needed by the model
-        full_input = {
-            'race': data.get('race', 'Caucasian'),
-            'gender': data.get('gender', 'Female'),
-            'age': data.get('age', '[70-80]'),
-            'admission_type_id': to_int(data.get('admission_type_id')),
-            'discharge_disposition_id': data.get('discharge_disposition_id', 'Home'),
-            'admission_source_id': to_int(data.get('admission_source_id')),
-            'time_in_hospital': to_int(data.get('time_in_hospital')),
-            'num_lab_procedures': to_int(data.get('num_lab_procedures')),
-            'num_procedures': to_int(data.get('num_procedures')),
-            'num_medications': to_int(data.get('num_medications')),
-            'number_outpatient': to_int(data.get('number_outpatient')),
-            'number_emergency': to_int(data.get('number_emergency')),
-            'number_inpatient': to_int(data.get('number_inpatient')),
-            'diag_1': data.get('diag_1', '250.83'),
-            'diag_2': data.get('diag_2', '250.01'),
-            'diag_3': data.get('diag_3', '250.8'),
-            'number_diagnoses': to_int(data.get('number_diagnoses')),
-            'max_glu_serum': data.get('max_glu_serum', 'None'),
-            'A1Cresult': data.get('A1Cresult', 'None'),
-            'metformin': data.get('metformin', 'No'),
-            'repaglinide': data.get('repaglinide', 'No'),
-            'nateglinide': data.get('nateglinide', 'No'),
-            'chlorpropamide': data.get('chlorpropamide', 'No'),
-            'glimepiride': data.get('glimepiride', 'No'),
-            'acetohexamide': data.get('acetohexamide', 'No'),
-            'glipizide': data.get('glipizide', 'No'),
-            'glyburide': data.get('glyburide', 'No'),
-            'tolbutamide': data.get('tolbutamide', 'No'),
-            'pioglitazone': data.get('pioglitazone', 'No'),
-            'rosiglitazone': data.get('rosiglitazone', 'No'),
-            'acarbose': data.get('acarbose', 'No'),
-            'miglitol': data.get('miglitol', 'No'),
-            'troglitazone': data.get('troglitazone', 'No'),
-            'tolazamide': data.get('tolazamide', 'No'),
-            'examide': data.get('examide', 'No'),
-            'citoglipton': data.get('citoglipton', 'No'),
-            'insulin': data.get('insulin', 'No'),
-            'glyburide-metformin': data.get('glyburide_metformin', 'No'),
-            'glipizide-metformin': data.get('glipizide_metformin', 'No'),
-            'glimepiride-pioglitazone': data.get('glimepiride_pioglitazone', 'No'),
-            'metformin-rosiglitazone': data.get('metformin_rosiglitazone', 'No'),
-            'metformin-pioglitazone': data.get('metformin_pioglitazone', 'No'),
-            'change': data.get('change', 'no'),
-            'diabetesMed': data.get('diabetesMed', 'yes')
-        }
-
-        # Match feature column order as expected by model
-        FEATURE_COLUMNS = [
-            'race', 'gender', 'age', 'admission_type_id', 'discharge_disposition_id', 'admission_source_id',
-            'time_in_hospital', 'num_lab_procedures', 'num_procedures', 'num_medications',
-            'number_outpatient', 'number_emergency', 'number_inpatient',
-            'diag_1', 'diag_2', 'diag_3', 'number_diagnoses',
-            'max_glu_serum', 'A1Cresult',
-            'metformin', 'repaglinide', 'nateglinide', 'chlorpropamide', 'glimepiride', 'acetohexamide',
-            'glipizide', 'glyburide', 'tolbutamide', 'pioglitazone', 'rosiglitazone', 'acarbose', 'miglitol',
-            'troglitazone', 'tolazamide', 'examide', 'citoglipton', 'insulin', 'glyburide-metformin',
-            'glipizide-metformin', 'glimepiride-pioglitazone', 'metformin-rosiglitazone',
-            'metformin-pioglitazone', 'change', 'diabetesMed'
-        ]
-
-        input_df = pd.DataFrame([full_input])[FEATURE_COLUMNS]
-
-        # Ensure correct data types
-        for col in input_df.select_dtypes(include='object').columns:
-            input_df[col] = input_df[col].astype('category')
-
-        # Predict risk
-        risk = diabetes_model.predict_proba(input_df)[0][1]
-
-        # Save to database
         record = DiabetesData(
             op_number=op_number,
             name=data.get('name'),
@@ -255,6 +370,7 @@ def add_diabetes():
             problem=data.get('problem'),
             available_doctors=data.get('available_doctors'),
             risk_score=risk,
+            model_features=json.dumps(features),
             number_inpatient=to_int(data.get('number_inpatient')),
             number_emergency=to_int(data.get('number_emergency')),
             discharge_disposition_id=data.get('discharge_disposition_id'),
@@ -276,6 +392,7 @@ def add_diabetes():
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @app.route('/doctor/all_patients')
+@login_required('doctor')
 def all_patients():
     model = request.args.get("model", "readmission")
     if model == "diabetes":
@@ -285,8 +402,22 @@ def all_patients():
 
     return render_template("all_patients.html", patients=patients, selected_model=model)
 
+
+@app.route('/nurse/all_patients')
+@login_required('nurse')
+def nurse_all_patients():
+    model = request.args.get("model", "readmission")
+    if model == "diabetes":
+        patients = DiabetesData.query.order_by(DiabetesData.created_at.desc()).all()
+    else:
+        patients = ReadmissionData.query.order_by(ReadmissionData.created_at.desc()).all()
+
+    return render_template("nurse_all_patients.html", patients=patients, selected_model=model)
+
+
 # Doctor route: Get patient details
 @app.route('/doctor/get_patient')
+@login_required('doctor')
 def get_patient():
     model = request.args.get('model')
     op_number = request.args.get('op_number')
@@ -303,8 +434,24 @@ def get_patient():
 
     return jsonify({'status': 'success', 'patient': {col.name: getattr(patient, col.name) for col in patient.__table__.columns}})
 
+
+@app.route('/doctor/edit/<op_number>')
+@login_required('doctor')
+def doctor_edit_patient(op_number):
+    model = request.args.get('model', 'readmission')
+    if model == 'diabetes':
+        patient = DiabetesData.query.filter_by(op_number=op_number).first()
+    else:
+        patient = ReadmissionData.query.filter_by(op_number=op_number).first()
+
+    return render_template(
+        "doctor_edit_patient.html", patient=patient, selected_model=model
+    )
+
+
 # Doctor route: Update patient
 @app.route('/doctor/update_patient', methods=['POST'])
+@login_required('doctor')
 def update_patient():
     model = request.args.get('model')
     data = request.form
@@ -322,72 +469,30 @@ def update_patient():
 
         # Update editable fields
         for key, value in data.items():
-            if key in ['id', 'created_at', 'risk_score']:
+            if key in ['id', 'created_at', 'risk_score', 'op_number']:
                 continue
             if hasattr(patient, key):
-                attr_type = type(getattr(patient, key))
-                try:
-                    setattr(patient, key, attr_type(value))
-                except:
-                    setattr(patient, key, value)
+                setattr(patient, key, coerce_like(getattr(patient, key), value))
 
         if model == 'diabetes':
-            # Full input as expected by the diabetes model
-            full_input = {
-                'race': 'Caucasian',
-                'gender': 'Female',
-                'age': patient.age,
-                'admission_type_id': 1,
-                'discharge_disposition_id': patient.discharge_disposition_id,
-                'admission_source_id': 1,
-                'time_in_hospital': patient.time_in_hospital,
-                'num_lab_procedures': patient.num_lab_procedures,
-                'num_procedures': 0,
-                'num_medications': patient.num_medications,
-                'number_outpatient': 0,
-                'number_emergency': patient.number_emergency,
-                'number_inpatient': patient.number_inpatient,
-                'diag_1': '250.83',
-                'diag_2': '250.01',
-                'diag_3': '250.8',
-                'number_diagnoses': patient.number_diagnoses,
-                'max_glu_serum': 'None',
-                'A1Cresult': 'None',
-                'metformin': patient.metformin,
-                'repaglinide': 'No',
-                'nateglinide': 'No',
-                'chlorpropamide': 'No',
-                'glimepiride': 'No',
-                'acetohexamide': 'No',
-                'glipizide': 'No',
-                'glyburide': 'No',
-                'tolbutamide': 'No',
-                'pioglitazone': 'No',
-                'rosiglitazone': 'No',
-                'acarbose': 'No',
-                'miglitol': 'No',
-                'troglitazone': 'No',
-                'tolazamide': 'No',
-                'examide': 'No',
-                'citoglipton': 'No',
-                'insulin': 'No',
-                'glyburide-metformin': 'No',
-                'glipizide-metformin': 'No',
-                'glimepiride-pioglitazone': 'No',
-                'metformin-rosiglitazone': 'No',
-                'metformin-pioglitazone': 'No',
-                'change': patient.change,
-                'diabetesMed': patient.diabetesMed
-            }
+            # Restore the feature vector captured when the record was created and
+            # refresh it with the patient's current clinical values before scoring.
+            features = None
+            if patient.model_features:
+                try:
+                    features = json.loads(patient.model_features)
+                except (TypeError, ValueError):
+                    features = None
 
-            input_df = pd.DataFrame([full_input])
-
-            # Convert all string columns to category
-            for col in input_df.select_dtypes(include='object').columns:
-                input_df[col] = input_df[col].astype('category')
-
-            # Predict new risk score
-            patient.risk_score = diabetes_model.predict_proba(input_df)[0][1]
+            if features is not None:
+                for name in PERSISTED_DIABETES_FEATURES:
+                    value = getattr(patient, name, None)
+                    if value is not None:
+                        features[name] = value
+                patient.risk_score = predict_diabetes_risk(features)
+            # Records created before feature capture have no real vector stored;
+            # leaving their score untouched is preferable to rescoring against
+            # placeholder race/gender/diagnosis values.
 
         elif model == 'readmission':
             features = {
@@ -418,6 +523,75 @@ def update_patient():
     except Exception as e:
         print(f"Update Error: {e}")
         return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@app.route('/doctor/update', methods=['POST'])
+@login_required('doctor')
+def doctor_update_patient_form():
+    """HTML form target used by doctor_edit_patient.html."""
+    model = request.args.get('model', 'readmission')
+    data = request.form
+    if model == 'diabetes':
+        patient = DiabetesData.query.filter_by(op_number=data.get('op_number')).first()
+    else:
+        patient = ReadmissionData.query.filter_by(op_number=data.get('op_number')).first()
+
+    if not patient:
+        return jsonify({'status': 'error', 'message': 'Patient not found'}), 404
+
+    try:
+        for key, value in data.items():
+            if key in ['id', 'created_at', 'risk_score', 'op_number']:
+                continue
+            if hasattr(patient, key):
+                setattr(patient, key, coerce_like(getattr(patient, key), value))
+        db.session.commit()
+    except Exception as e:
+        print(f"Update Error: {e}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+    return redirect(url_for('doctor_edit_patient', op_number=patient.op_number, model=model))
+
+
+@app.route('/nurse/edit/<op_number>')
+@login_required('nurse')
+def nurse_edit_patient(op_number):
+    model = request.args.get('model', 'readmission')
+    if model == 'diabetes':
+        patient = DiabetesData.query.filter_by(op_number=op_number).first()
+    else:
+        patient = ReadmissionData.query.filter_by(op_number=op_number).first()
+
+    return render_template(
+        "nurse_edit_patient.html", patient=patient, selected_model=model
+    )
+
+
+@app.route('/nurse/update', methods=['POST'])
+@login_required('nurse')
+def nurse_update_patient():
+    """HTML form target used by nurse_edit_patient.html."""
+    data = request.form
+    op_number = data.get('op_number')
+    patient = ReadmissionData.query.filter_by(op_number=op_number).first() or \
+        DiabetesData.query.filter_by(op_number=op_number).first()
+
+    if not patient:
+        return render_template('nurse_edit_patient.html', patient=None), 404
+
+    try:
+        for key, value in data.items():
+            if key in ['id', 'created_at', 'risk_score', 'op_number']:
+                continue
+            if hasattr(patient, key):
+                setattr(patient, key, coerce_like(getattr(patient, key), value))
+        db.session.commit()
+    except Exception as e:
+        print(f"Update Error: {e}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+    return redirect(url_for('nurse_all_patients'))
+
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))

@@ -10,7 +10,7 @@
   <div class="max-w-xl mx-auto bg-white p-8 shadow-xl rounded-xl">
     <div class="mb-4 flex justify-between items-center">
       <h1 class="text-xl font-bold text-blue-700">✏️ Edit Patient Record</h1>
-      <a href="/nurse/all_patients" class="text-sm text-blue-600 hover:underline">← Back</a>
+      <a href="/nurse/all_patients?model={{ selected_model if selected_model is defined else 'readmission' }}" class="text-sm text-blue-600 hover:underline">← Back</a>
     </div>
 
     <form action="/nurse/update" method="POST" class="space-y-4">
