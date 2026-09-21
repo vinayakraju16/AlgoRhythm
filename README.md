@@ -28,7 +28,7 @@ An intelligent web application to predict hospital **readmission** and **diabete
 - Flask (Web Framework)
 - Tailwind CSS (Frontend Styling)
 - SQLite (Database)
-- XGBoost & RandomForest (ML Models)
+- XGBoost (ML Models)
 - Pandas, NumPy, Joblib
 
 ---
@@ -40,20 +40,24 @@ project/
 ├── app.py                      # Main Flask app
 ├── requirements.txt           # Python dependencies
 ├── render.yaml                # Render deployment config
-├── instances/
-│   ├── diabetes.db           # Database
-│   └── readmission.db        # Database
+├── runtime.txt                # Pinned Python version for Render
+├── instance/
+│   ├── diabetes.db           # Database (created at runtime)
+│   └── readmission.db        # Database (created at runtime)
 ├── model/
-│   ├── diabetes_model.pkl     # Random forest
-│   ├── preprocessing.pkl      # Pre-Processing file
-│   └── heart_model.pkl        # MLP Model 
+│   ├── diabetes_model.pkl     # XGBoost classifier
+│   ├── preprocessing.pkl      # sklearn preprocessing pipeline
+│   └── heart_model.pkl        # XGBoost classifier
 ├── static/
 │   └── style.css              # (optional styling)
 ├── templates/
-│   ├── login.html             # Login Page
+│   ├── login.html             # Login Page (POSTs to /login)
 │   ├── nurse.html             # Form for Nurse
 │   ├── doctor.html            # Doctor Dashboard
-│   └── all_patients.html      # View All Patients
+│   ├── all_patients.html      # Doctor: view all patients
+│   ├── nurse_all_patients.html# Nurse: view all patients
+│   ├── doctor_edit_patient.html
+│   └── nurse_edit_patient.html
 └── README.md
 ```
 
@@ -63,8 +67,8 @@ project/
 
 ### 1. Clone the Repository
 ```bash
-git clone https://github.com/yourusername/hospital-risk-predictor.git
-cd hospital-risk-predictor
+git clone https://github.com/vinayakraju16/AlgoRhythm.git
+cd AlgoRhythm
 ```
 
 ### 2. Create Virtual Environment
@@ -91,12 +95,28 @@ Visit: `http://localhost:5000`
 ### 🏥 Hospital Readmission Model
 - Input Features:
   - age, time_in_hospital, n_procedures, n_lab_procedures, etc.
-- Model: Random Forest (with preprocessor)
+- Model: XGBoost classifier (with sklearn preprocessor)
 
 ### 💉 Diabetes Risk Model
 - Input Features:
   - race, gender, age, diagnosis codes, A1C results, etc.
-- Model: Trained XGBoost model
+- Model: XGBoost classifier
+
+---
+
+## 🔐 Authentication
+
+Credentials are read from environment variables, with development defaults:
+
+| Variable | Default |
+| --- | --- |
+| `DOCTOR_USERNAME` | `doctor` |
+| `DOCTOR_PASSWORD` | `admin123` |
+| `NURSE_USERNAME` | `nurse` |
+| `NURSE_PASSWORD` | `nurse123` |
+| `SECRET_KEY` | `dev-secret-change-me` |
+
+Set real values (especially `SECRET_KEY`) before deploying.
 
 ---
 
@@ -105,24 +125,12 @@ Visit: `http://localhost:5000`
 2. Enters patient details ➡️ **Receives OP Number**
 3. 👨‍⚕️ **Doctor logs in** with the OP number
 4. Sees summary ➡️ Edits data if needed
-5. System **recalculates and updates risk score**
-
----
-
-```yaml
-services:
-  - type: web
-    name: hospital-app
-    env: python
-    buildCommand: "pip install -r requirements.txt"
-    startCommand: "python app.py"
-    autoDeploy: true
-```
+5. System **recalculates and updates risk score on save**
 
 ---
 
 ## 🧠 Future Improvements
-- Add authentication and user roles
+- Replace environment-variable credentials with a user table / SSO
 - Enable model training via UI
 - Export patient reports as PDF
 - Integrate cloud databases
