@@ -8,6 +8,18 @@
   <script>
     let fetchedPatient = null;
 
+    // Escape every value that is interpolated into innerHTML: patient text is
+    // user-supplied and would otherwise be stored XSS.
+    function escapeHtml(value) {
+      if (value === null || value === undefined) return '';
+      return String(value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
     async function fetchPatient() {
       const model = document.getElementById('modelSelector').value;
       const opNumber = document.getElementById('opInput').value;
@@ -41,15 +53,15 @@
         }
 
         let summaryHTML = `
-        <div class="${riskBgClass} p-6 rounded-xl shadow-lg">
-          <h2 class="text-2xl font-bold text-blue-700 mb-4">🧾 Patient Summary (${model})</h2>
+        <div class="${escapeHtml(riskBgClass)} p-6 rounded-xl shadow-lg">
+          <h2 class="text-2xl font-bold text-blue-700 mb-4">🧾 Patient Summary (${escapeHtml(model)})</h2>
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 text-gray-800 text-base">
-            <p><span class="font-semibold">👤 Name:</span> ${patient.name}</p>
-            <p><span class="font-semibold">🎂 Age:</span> ${patient.age}</p>
-            <p><span class="font-semibold">📏 Height:</span> ${patient.height} cm</p>
-            <p><span class="font-semibold">⚖️ Weight:</span> ${patient.weight} kg</p>
-            <p><span class="font-semibold">🩺 Problem:</span> ${patient.problem}</p>
-            <p><span class="font-semibold">📊 Risk Score:</span> <span class="${riskTextClass} font-bold">${riskScore.toFixed(2)}%</span></p>
+            <p><span class="font-semibold">👤 Name:</span> ${escapeHtml(patient.name)}</p>
+            <p><span class="font-semibold">🎂 Age:</span> ${escapeHtml(patient.age)}</p>
+            <p><span class="font-semibold">📏 Height:</span> ${escapeHtml(patient.height)} cm</p>
+            <p><span class="font-semibold">⚖️ Weight:</span> ${escapeHtml(patient.weight)} kg</p>
+            <p><span class="font-semibold">🩺 Problem:</span> ${escapeHtml(patient.problem)}</p>
+            <p><span class="font-semibold">📊 Risk Score:</span> <span class="${escapeHtml(riskTextClass)} font-bold">${escapeHtml(riskScore.toFixed(2))}%</span></p>
           </div>
           <div class="mt-6 text-right">
             <button onclick="showEdit()" class="bg-yellow-500 text-white px-4 py-2 rounded hover:bg-yellow-600 transition font-medium shadow-md">
@@ -134,30 +146,8 @@
         formFields.appendChild(wrapper);
       }
 
-      // ➕ Add Diagnosis, Treatment, Notes fields
-      const extraFields = [
-        { name: 'diagnosis', label: 'Diagnosis' },
-        { name: 'treatment', label: 'Treatment' },
-        { name: 'notes', label: 'Notes' }
-      ];
-
-      extraFields.forEach(field => {
-        const wrapper = document.createElement('div');
-        wrapper.className = 'form-group';
-
-        const labelEl = document.createElement('label');
-        labelEl.className = 'block text-sm font-semibold text-gray-700 mb-1';
-        labelEl.textContent = field.label;
-
-        const inputEl = document.createElement('textarea');
-        inputEl.name = field.name;
-        inputEl.value = fetchedPatient[field.name] || '';
-        inputEl.className = 'p-2 border border-gray-300 rounded w-full h-24';
-
-        wrapper.appendChild(labelEl);
-        wrapper.appendChild(inputEl);
-        formFields.appendChild(wrapper);
-      });
+      // The previous form invented diagnosis/treatment/notes fields that no
+      // model column backs, so anything typed there was silently discarded.
 
       const hiddenInput = document.createElement('input');
       hiddenInput.type = 'hidden';
@@ -198,7 +188,7 @@
     <!-- Top bar -->
     <div class="flex justify-between items-center mb-6">
       <h1 class="text-2xl font-bold text-blue-700">👨‍⚕️ Doctor Panel</h1>
-      <a href="/" class="text-sm text-red-600 hover:underline font-semibold">🔓 Logout</a>
+      <a href="/logout" class="text-sm text-red-600 hover:underline font-semibold">🔓 Logout</a>
     </div>
 
     <!-- Controls -->
@@ -211,6 +201,8 @@
       <input id="opInput" placeholder="Enter OP Number" class="p-2 border rounded flex-1" />
       <button onclick="fetchPatient()" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">🔍 Fetch</button>
       <button onclick="goToAllPatients()" class="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700">📋 Show All Patients</button>
+      <a href="/doctor/dashboard" class="bg-purple-600 text-white px-4 py-2 rounded hover:bg-purple-700">📊 Dashboard</a>
+      <a href="/doctor/audit_log" class="bg-gray-600 text-white px-4 py-2 rounded hover:bg-gray-700">🗒️ Audit Log</a>
     </div>
 
     <!-- Summary -->
@@ -220,6 +212,7 @@
     <div id="editForm" class="hidden transition-all duration-300 ease-in-out mt-6">
       <h2 class="text-xl font-bold mb-4 text-green-700">📝 Edit Patient Details</h2>
       <form id="editPatientForm" onsubmit="updatePatient(event)" enctype="multipart/form-data">
+        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}" />
         <div id="formFields" class="grid grid-cols-1 sm:grid-cols-2 gap-6"></div>
         <div class="mt-6">
           <button type="submit" class="w-full bg-green-600 text-white py-3 rounded-lg shadow hover:bg-green-700 transition">💾 Save Changes</button>

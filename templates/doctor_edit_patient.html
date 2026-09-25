@@ -10,11 +10,12 @@
   <div class="max-w-4xl mx-auto bg-white p-8 shadow-xl rounded-xl">
     <div class="mb-4 flex justify-between items-center">
       <h1 class="text-xl font-bold text-blue-700">🩺 Edit Patient Record</h1>
-      <a href="/doctor/all_patients" class="text-sm text-blue-600 hover:underline">← Back</a>
+      <a href="/doctor/all_patients?model={{ selected_model }}" class="text-sm text-blue-600 hover:underline">← Back</a>
     </div>
 
     {% if patient %}
-    <form action="/doctor/update" method="POST" class="grid grid-cols-2 gap-4">
+    <form action="/doctor/update?model={{ selected_model }}" method="POST" class="grid grid-cols-2 gap-4">
+      <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}" />
       <input type="hidden" name="op_number" value="{{ patient.op_number }}">
 
       <!-- Basic Info -->
@@ -68,10 +69,8 @@
         <option value="no" {% if patient.diabetes_med == 'no' %}selected{% endif %}>No</option>
       </select>
 
-      <!-- Notes -->
-      <textarea name="diagnosis" placeholder="Diagnosis" class="col-span-2 p-2 border rounded" required>{{ patient.diagnosis }}</textarea>
-      <textarea name="treatment" placeholder="Treatment" class="col-span-2 p-2 border rounded" required>{{ patient.treatment }}</textarea>
-      <textarea name="notes" placeholder="Additional Notes" class="col-span-2 p-2 border rounded">{{ patient.notes }}</textarea>
+      <!-- Notes: no diagnosis/treatment/notes columns exist on either model,
+           so the old textareas silently discarded what was typed there. -->
 
       <button type="submit" class="col-span-2 bg-green-600 text-white py-2 rounded hover:bg-green-700">💾 Save Changes</button>
     </form>
